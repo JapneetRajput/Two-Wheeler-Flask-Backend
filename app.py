@@ -6,6 +6,11 @@ from sklearn.ensemble import RandomForestClassifier
 import pickle
 from flask import Flask, request, jsonify
 from supabase import create_client, Client
+from dotenv import load_dotenv
+import os
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Initialize the Flask app
 app = Flask(__name__)
@@ -30,8 +35,8 @@ selected_columns = [
 ]
 
 # Supabase client initialization
-SUPABASE_URL = 'your_supabase_url'
-SUPABASE_KEY = 'your_supabase_key'
+SUPABASE_URL = os.getenv('SUPABASE_URL')
+SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
