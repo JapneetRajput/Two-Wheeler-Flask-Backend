@@ -30,8 +30,8 @@ selected_columns = [
 ]
 
 # Supabase client initialization
-SUPABASE_URL = 'https://dzvxbisnqbounjiovbng.supabase.co'
-SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR6dnhiaXNucWJvdW5qaW92Ym5nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MTA2ODE0ODMsImV4cCI6MjAyNjI1NzQ4M30.KSfNJ34pv3nM7HUmsHtQlxnMmZXal8wnYeLlefuDgh4'
+SUPABASE_URL = 'your_supabase_url'
+SUPABASE_KEY = 'your_supabase_key'
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
