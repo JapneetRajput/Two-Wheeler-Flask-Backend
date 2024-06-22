@@ -9,6 +9,7 @@ from flask import Flask, request, jsonify
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from datetime import date
+from collections import Counter
 
 # Load environment variables from .env file
 load_dotenv()
@@ -35,6 +36,9 @@ selected_columns = [
     'Pitch', 'Yaw'
 ]
 
+class_labels = ['Normal', 'Left Deviation',
+                'Right Deviation', 'Sudden Acceleration']
+
 # Fetch Supabase URL and key from environment variables
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
@@ -54,7 +58,7 @@ def process_csv(file_path):
         # Calculate total time using the first and last Timestamp value
         df['Timestamp'] = pd.to_datetime(df['Timestamp'])
         total_time = (df['Timestamp'].iloc[-1] -
-                      df['Timestamp'].iloc[0]).total_seconds() / 3600  # in hours
+                      df['Timestamp'].iloc[0]).total_seconds() / 60  # in minutes
 
         # Calculate the Average Speed
         average_speed = df['CurrentSpeed'].mean()
@@ -161,14 +165,12 @@ def predict():
             predictions = combined_model_predict(
                 conv_autoencoder, rf_model, data)
 
-            # Assuming rf_probabilities gives a 2D array where the second column is the probability of the positive class
-            positive_class_probabilities = predictions[:, 1]
+            # Count occurrences of each classification
+            class_counts = Counter(np.argmax(predictions, axis=1))
 
-            # Add the predictions to the original DataFrame
-            original_df['target'] = positive_class_probabilities
-
-            # Determine classification based on a threshold (e.g., 0.5)
-            classification = 'Normal' if positive_class_probabilities.mean() > 0.5 else 'Abnormal'
+            # Determine classification based on the class with the maximum count
+            max_class_index = max(class_counts, key=class_counts.get)
+            classification = class_labels[max_class_index]
 
             # Insert calculated data into Supabase
             supabase_response = insert_into_supabase(
