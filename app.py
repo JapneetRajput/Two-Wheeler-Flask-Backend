@@ -4,7 +4,7 @@ import tensorflow as tf
 from tensorflow.keras.models import load_model
 from sklearn.ensemble import RandomForestClassifier
 import pickle
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 
 # Initialize the Flask app
 app = Flask(__name__)
@@ -29,6 +29,9 @@ def process_csv(file_path):
     # Read the CSV file
     df = pd.read_csv(file_path)
 
+    # Create a copy of the DataFrame to retain all columns
+    original_df = df.copy()
+
     # Ensure only selected columns are used
     df = df[selected_columns]
 
@@ -44,7 +47,7 @@ def process_csv(file_path):
     # Reshape the data to the format expected by the model (batch_size, sequence_length, num_features)
     data = np.expand_dims(data, axis=-1)
 
-    return data
+    return data, original_df
 
 
 def combined_model_predict(cnn_model, rf_model, data):
@@ -70,15 +73,23 @@ def predict():
         file.save(file_path)
 
         # Process the file
-        data = process_csv(file_path)
+        data, original_df = process_csv(file_path)
 
         # Make predictions
         predictions = combined_model_predict(conv_autoencoder, rf_model, data)
 
-        # Convert predictions to a list
-        predictions_list = predictions.tolist()
+        # Assuming rf_probabilities gives a 2D array where the second column is the probability of the positive class
+        positive_class_probabilities = predictions[:, 1]
 
-        return jsonify(predictions_list)
+        # Add the predictions to the original DataFrame
+        original_df['target'] = positive_class_probabilities
+
+        # Save the updated DataFrame to a new CSV file
+        updated_file_path = "updated_file.csv"
+        original_df.to_csv(updated_file_path, index=False)
+
+        # Send the updated CSV file as a response
+        return send_file(updated_file_path, as_attachment=True, download_name='updated_file.csv')
 
 
 if __name__ == '__main__':
