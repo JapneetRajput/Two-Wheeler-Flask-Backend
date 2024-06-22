@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import numpy as np
 import tensorflow as tf
@@ -7,7 +8,7 @@ import pickle
 from flask import Flask, request, jsonify
 from supabase import create_client, Client
 from dotenv import load_dotenv
-import os
+from datetime import date
 
 # Load environment variables from .env file
 load_dotenv()
@@ -34,9 +35,11 @@ selected_columns = [
     'Pitch', 'Yaw'
 ]
 
-# Supabase client initialization
+# Fetch Supabase URL and key from environment variables
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
+
+# Supabase client initialization
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
@@ -48,14 +51,27 @@ def process_csv(file_path):
         # Create a copy of the DataFrame to retain all columns
         original_df = df.copy()
 
+        # Calculate total time using the first and last Timestamp value
+        df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+        total_time = (df['Timestamp'].iloc[-1] -
+                      df['Timestamp'].iloc[0]).total_seconds() / 3600  # in hours
+
+        # Calculate the Average Speed
+        average_speed = df['CurrentSpeed'].mean()
+
+        # Calculate the Distance Covered
+        total_distance = average_speed * total_time
+
+        # Calculate the Average Acceleration
+        accelerations = np.sqrt(
+            df['Accel_X']**2 + df['Accel_Y']**2 + df['Accel_Z']**2)
+        average_acceleration = accelerations.mean()
+
         # Ensure only selected columns are used
         df = df[selected_columns]
 
-        # Assuming 'Timestamp' is the index column
-        df.set_index('Timestamp', inplace=True)
-
         # Convert to numpy array
-        data = df.values
+        data = df.drop(columns=['Timestamp']).values
 
         # Ensure data is float32
         data = data.astype('float32')
@@ -63,7 +79,7 @@ def process_csv(file_path):
         # Reshape the data to the format expected by the model (batch_size, sequence_length, num_features)
         data = np.expand_dims(data, axis=-1)
 
-        return data, original_df
+        return data, original_df, total_distance, average_speed, average_acceleration, total_time
     except Exception as e:
         print(f"Error processing CSV: {e}")
         raise
@@ -80,19 +96,31 @@ def combined_model_predict(cnn_model, rf_model, data):
         raise
 
 
-def insert_into_supabase():
+def get_ride_count(rider_email):
     try:
+        response = supabase.table('Riders').select(
+            '*').eq('Email', rider_email).execute()
+        ride_count = len(response.data)
+        return ride_count + 1
+    except Exception as e:
+        print(f"Error fetching ride count: {e}")
+        raise
+
+
+def insert_into_supabase(rider_name, rider_email, total_distance, average_speed, average_acceleration, classification, driving_time):
+    try:
+        ride_no = get_ride_count(rider_email)
         data = {
-            "Rider_Name": "Harsh",
-            "Distance Covered": 4.76,
-            "Average Speed": 20.7694,
-            "Average Acceleration": 9.89604,
-            "Classification": "Normal",
-            "Ride No": 10,
-            "Date": "2024-04-18",
+            "Rider_Name": rider_name,
+            "Distance Covered": total_distance,
+            "Average Speed": average_speed,
+            "Average Acceleration": average_acceleration,
+            "Classification": classification,
+            "Ride No": ride_no,
+            "Date": date.today().isoformat(),
             "Rider Score": 95,
-            "Email": "2020.harsh.deshmukh@ves.ac.in",
-            "Driving Time": 16
+            "Email": rider_email,
+            "Driving Time": driving_time
         }
 
         response = supabase.table('Riders').insert(data).execute()
@@ -113,13 +141,21 @@ def predict():
         if file.filename == '':
             return jsonify({"error": "No selected file"}), 400
 
+        # Get rider name and email from the request form
+        rider_name = request.form.get('rider_name')
+        rider_email = request.form.get('rider_email')
+
+        if not rider_name or not rider_email:
+            return jsonify({"error": "Rider name and email are required"}), 400
+
         if file:
             # Save the file
             file_path = "uploaded_file.csv"
             file.save(file_path)
 
             # Process the file
-            data, original_df = process_csv(file_path)
+            data, original_df, total_distance, average_speed, average_acceleration, driving_time = process_csv(
+                file_path)
 
             # Make predictions
             predictions = combined_model_predict(
@@ -131,12 +167,12 @@ def predict():
             # Add the predictions to the original DataFrame
             original_df['target'] = positive_class_probabilities
 
-            # Save the updated DataFrame to a new CSV file (if needed)
-            updated_file_path = "updated_file.csv"
-            original_df.to_csv(updated_file_path, index=False)
+            # Determine classification based on a threshold (e.g., 0.5)
+            classification = 'Normal' if positive_class_probabilities.mean() > 0.5 else 'Abnormal'
 
-            # Insert hardcoded data into Supabase
-            supabase_response = insert_into_supabase()
+            # Insert calculated data into Supabase
+            supabase_response = insert_into_supabase(
+                rider_name, rider_email, total_distance, average_speed, average_acceleration, classification, driving_time)
 
             return jsonify({"message": "Data processed and inserted into Supabase successfully.", "supabase_response": supabase_response.data})
     except Exception as e:
