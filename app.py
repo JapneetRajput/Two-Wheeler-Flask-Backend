@@ -134,6 +134,11 @@ def insert_into_supabase(rider_name, rider_email, total_distance, average_speed,
         raise
 
 
+@app.route('/test', methods=['GET'])
+def test():
+    return jsonify("Running")
+
+
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
@@ -183,4 +188,4 @@ def predict():
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
