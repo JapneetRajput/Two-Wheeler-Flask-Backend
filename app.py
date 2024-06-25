@@ -332,32 +332,77 @@ def predict():
         return jsonify({"error": "Fatal error"}), 500
 
 
-@app.route('/internal', methods=['POST'])
-def internal():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part in the request'}), 400
+models = {}
+scalers = {}
 
-    file = request.files['file']
+for sensor in sensors:
+    print("inside for")
+    models[sensor] = load_model(f'models/Internal/lstm_{sensor}.h5')
+    print(models)
+    with open(f'models/Internal/scaler_{sensor}.pkl', 'rb') as f:
+        scalers[sensor] = pickle.load(f)
 
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
-
-    if file:
-        filename = secure_filename(file.filename)
-        file_path = os.path.join(upload_dir, filename)
-        file.save(file_path)
-
-        # Process the file and calculate MSE for each sensor
-        results = {}
-        for sensor in sensors:
-            mse = test_on_new_data(file_path, sensor)
-            results[sensor] = mse
-
-        # Remove the file after processing
-        os.remove(file_path)
-
-        return jsonify(results)
+# Load health indices
+with open('models/Internal/health_indices.pkl', 'rb') as f:
+    health_indices = pickle.load(f)
 
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+@app.route('/predict-internal', methods=['POST'])
+def predict_internal():
+    data = request.files['file']
+    sensor = request.form['sensor']
+
+    # Read the CSV file into a DataFrame
+    rides_data = pd.read_csv(data)
+    rides_data['Timestamp'] = pd.to_datetime(rides_data['Timestamp'], unit='s')
+
+    if sensor not in models:
+        return jsonify({'error': 'Sensor not recognized'}), 400
+
+    scaler = scalers[sensor]
+    model = models[sensor]
+
+    # Prepare data for the requested sensor
+    rides_data = rides_data[['Timestamp', sensor]].set_index('Timestamp')
+    scaled_data = scaler.transform(rides_data)
+    X = scaled_data[:-1]
+    y = scaled_data[1:]
+    X = X.reshape(-1, 1, 1)
+
+    # Predict using the model
+    predictions = model.predict(X)
+
+    # Detect anomalies
+    acceptable_ranges = {
+        'Battery Voltage Sensor': (40, 54),
+        'Battery Current Sensor': (4, 10),
+        'Battery Temperature Sensor': (30, 60),
+        'Motor RPM Sensor': (2000, 8000),
+        'Motor Temperature Sensor': (20, 80),
+        'Brake Pressure Sensor': (50, 150)
+    }
+
+    def detect_anomalies(predictions, column, scaler, acceptable_ranges):
+        predictions_inv = scaler.inverse_transform(predictions.reshape(-1, 1))
+        anomalies = (predictions_inv < acceptable_ranges[column][0]) | (
+            predictions_inv > acceptable_ranges[column][1])
+        return anomalies.sum()
+
+    def calculate_health_index(anomaly_counts, total_possible_anomalies):
+        severity_weights = [1, 2, 3]
+        total_anomalies = sum(anomaly_counts)
+        max_severity = max(severity_weights) * total_possible_anomalies
+        health_index = 1 - (total_anomalies / max_severity)
+        return health_index
+
+    anomaly_count = detect_anomalies(
+        predictions, sensor, scaler, acceptable_ranges)
+    total_possible_anomalies = len(predictions)
+    health_index = calculate_health_index(
+        [anomaly_count], total_possible_anomalies)
+
+    return jsonify({'health_index': health_index})
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
